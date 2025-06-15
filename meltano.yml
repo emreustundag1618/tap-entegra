@@ -1,0 +1,94 @@
+version: 1
+send_anonymous_usage_stats: true
+project_id: tap-entegra
+default_environment: test
+venv:
+  backend: uv
+environments:
+- name: test
+plugins:
+  extractors:
+  - name: tap-entegra
+    namespace: tap_entegra
+    pip_url: -e .
+    capabilities:
+    - state
+    - catalog
+    - discover
+    - about
+    - stream-maps
+
+    # TODO: Declare settings and their types here:
+    settings_group_validation:
+    - [email, password]
+
+    # TODO: Declare default configuration values here:
+    settings:
+    - name: email
+      label: Email
+      description: Your Entegra email for authentication
+
+    - name: password
+      kind: string
+      label: Password
+      description: Your Entegra password for authentication
+      sensitive: true
+
+    - name: api_url
+      label: API URL
+      description: The base URL for the Entegra API
+
+    - name: start_date
+      kind: date_iso8601
+      label: Start Date
+      description: The earliest record date to sync
+
+    - name: page_size
+      kind: integer
+      label: Page Size
+      description: Number of records to fetch per page
+
+    - name: user_agent
+      label: User Agent
+      description: A custom User-Agent header to send with each request
+
+    # TODO: Declare required settings here:
+    config:
+      email: apitestv2@entegrabilisim.com
+      password: apitestv2
+      api_url: https://apiv2.entegrabilisim.com
+      page_size: 100
+      start_date: '2010-01-01T00:00:00Z'
+
+    select:
+    # - '!*.*'
+    - categories.*
+    - brands.*
+    - stores.*
+    - marketplace_quantity_settings.*
+    - marketplace_price_settings.*
+    - prices.*
+    - customers.*
+    - products.*
+    - orders.*
+  loaders:
+  - name: target-jsonl
+    variant: andyh1203
+    pip_url: target-jsonl
+  - name: target-clickhouse
+    variant: shaped-ai
+    pip_url: git+https://github.com/shaped-ai/target-clickhouse.git
+    capabilities:
+      - about
+      - stream-maps
+      - schema-flattening
+    config:
+      host: host.docker.internal
+      port: 8123
+      username: default
+      database: raw_dev
+      driver: http
+      secure: false
+      sqlalchemy_url: clickhouse+http://default:@host.docker.internal:8123/raw_dev
+      verify: false
+      engine_type: MergeTree
