@@ -1,226 +1,223 @@
 # tap-entegra
 
-A Singer tap for extracting data from the Entegra API, built with the [Meltano Singer SDK](https://sdk.meltano.com).
+`tap-entegra` is a Singer tap for extracting data from the Entegra API.
 
-## Overview
-
-This tap extracts data from the [Entegra API](https://apiv2.entegrabilisim.com) and produces JSON-formatted data following the Singer specification. It supports comprehensive data extraction from an e-commerce platform with the following streams:
-
-### Available Streams
-
-- **Categories** (29 records) - Product category hierarchy
-- **Brands** (100 records) - Brand information
-- **Stores** - Store locations and details
-- **Marketplace Settings** - Quantity and price settings for marketplaces
-- **Prices** (70 records) - Pricing configurations
-- **Customers** - Customer information with pagination support
-- **Products** - Complex product catalog with variations, images, and marketplace data
-- **Orders** (1,100+ records) - Complete order information with customer details and line items
-
-## Features
-
-✅ **Comprehensive Data Extraction** - All major Entegra API endpoints supported  
-✅ **Pagination Handling** - Automatic pagination for large datasets  
-✅ **JWT Authentication** - Secure API authentication with token refresh  
-✅ **ClickHouse Integration** - Direct loading to ClickHouse database  
-✅ **Docker Support** - Containerized execution with Meltano  
-✅ **Schema Validation** - Proper data type handling and validation  
+Built with the [Meltano Tap SDK](https://sdk.meltano.com) for Singer Taps.
 
 ## Installation
 
-### Using Docker (Recommended)
+Install from PyPi:
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/tap-entegra.git
-cd tap-entegra
-
-# Run with Meltano in Docker
-docker run -v ${pwd}:/projects -w /projects meltano/meltano run tap-entegra target-clickhouse
+pipx install tap-entegra
 ```
 
-### From Source
+Install from GitHub:
 
 ```bash
-git clone https://github.com/yourusername/tap-entegra.git
-cd tap-entegra
-pip install -e .
+pipx install git+https://github.com/emreustundag/tap-entegra.git@main
 ```
 
 ## Configuration
 
-The tap requires the following configuration parameters:
+### Accepted Config Options
 
-| Setting | Required | Type | Description |
-|---------|----------|------|-------------|
-| `email` | Yes | String | Your Entegra account email |
-| `password` | Yes | String | Your Entegra account password |
-| `api_url` | No | String | API base URL (default: `https://apiv2.entegrabilisim.com`) |
-| `start_date` | No | Date | Earliest record date for incremental sync (ISO 8601 format) |
-| `page_size` | No | Integer | Records per page (default: 100) |
-| `user_agent` | No | String | Custom User-Agent header |
+| Setting | Required | Default | Description |
+|---------|----------|---------|-------------|
+| email | True | None | Your Entegra email for authentication |
+| password | True | None | Your Entegra password for authentication |
+| api_url | True | https://apiv2.entegrabilisim.com | The base URL for the Entegra API |
+| start_date | True | None | The earliest record date to sync (ISO format) |
+| page_size | False | 100 | Number of records to fetch per page |
+| date_chunk_size | False | 30 | Number of days to process in each chunk for large datasets |
+| user_agent | False | None | A custom User-Agent header to send with each request |
 
-### Example Configuration
+### Authentication
 
-The project includes a pre-configured `meltano.yml` with test credentials:
+The tap uses JWT authentication with the Entegra API. You need to provide your email and password, which will be used to obtain JWT tokens automatically.
 
+### Configuration Example
+
+Create a `config.json` file (copy from `config.sample.json`):
+
+```json
+{
+  "email": "your-email@example.com",
+  "password": "your-password",
+  "api_url": "https://apiv2.entegrabilisim.com",
+  "start_date": "2020-01-01T00:00:00Z",
+  "page_size": 100,
+  "date_chunk_size": 30
+}
+```
+
+Or configure in `meltano.yml`:
+
+```yaml
+# meltano.yml
+plugins:
+  extractors:
+  - name: tap-entegra
+    pip_url: git+https://github.com/emreustundag/tap-entegra.git@main
+    config:
+      email: your-email@example.com
+      password: your-password
+      api_url: https://apiv2.entegrabilisim.com
+      start_date: '2020-01-01T00:00:00Z'
+      page_size: 100
+      date_chunk_size: 30
+```
+
+## Supported Streams
+
+The tap supports the following streams from the Entegra API:
+
+| Stream | Endpoint | Replication Method | Primary Key | Description |
+|--------|----------|-------------------|-------------|-------------|
+| **orders** | `/order/` | FULL_TABLE | `id` | Order data with date-range chunking for performance |
+| **products** | `/product/` | FULL_TABLE | `id` | Product catalog with variations and pricing |
+| **categories** | `/category/` | FULL_TABLE | `id` | Product categories |
+| **customers** | `/customer/` | FULL_TABLE | `id` | Customer information |
+| **brands** | `/product/brand/` | FULL_TABLE | `id` | Product brands |
+| **stores** | `/store/getStores` | FULL_TABLE | `id` | Store information |
+| **prices** | `/price/getPrices` | FULL_TABLE | `id` | Pricing information |
+| **marketplace_quantity_settings** | `/store/getMarketplaceQuantitySettings` | FULL_TABLE | `id` | Marketplace quantity settings |
+| **marketplace_price_settings** | `/price/getMarketplacePriceSettings` | FULL_TABLE | `id` | Marketplace price settings |
+
+### Replication Strategy
+
+All streams use **FULL_TABLE** replication, meaning they extract all available data on each run. This approach was chosen because:
+
+1. **API Limitations**: The Entegra API's incremental filtering has limitations
+2. **Data Consistency**: Ensures complete data synchronization
+3. **Simplicity**: Reliable and predictable behavior
+
+### Performance Optimizations
+
+#### Orders Stream - Date Chunking
+The orders stream implements date-range chunking to handle large datasets efficiently:
+
+- **Chunk Size**: Configurable via `date_chunk_size` (default: 30 days)
+- **Date Range**: From `start_date` to current date
+- **Benefits**: Reduces memory usage and improves reliability for large order volumes
+
+Example for large datasets:
 ```yaml
 config:
-  email: apitestv2@entegrabilisim.com
-  password: apitestv2
-  api_url: https://apiv2.entegrabilisim.com
-  page_size: 100
-  start_date: '2010-01-01T00:00:00Z'
+  date_chunk_size: 7  # Process 7 days at a time for very large datasets
 ```
-
-## ClickHouse Integration
-
-This tap includes pre-configured ClickHouse integration for direct data loading:
-
-### ClickHouse Configuration
-
-```yaml
-loaders:
-- name: target-clickhouse
-  variant: shaped-ai
-  config:
-    host: host.docker.internal
-    port: 8123
-    username: default
-    database: raw_dev
-    engine_type: MergeTree
-```
-
-### Running the Pipeline
-
-```bash
-# Extract and load to ClickHouse
-docker run -v ${pwd}:/projects -w /projects meltano/meltano run tap-entegra target-clickhouse
-
-# Extract to JSON Lines format
-docker run -v ${pwd}:/projects -w /projects meltano/meltano run tap-entegra target-jsonl
-```
-
-## Authentication
-
-The tap uses JWT authentication with the Entegra API:
-
-1. Authenticates using email/password to obtain JWT token
-2. Uses "JWT {token}" format in Authorization header
-3. Automatically refreshes tokens (default: 1-hour refresh cycle)
-4. Tokens are valid for 90 days according to API documentation
-
-## Stream Details
-
-### Products Stream
-- **Endpoint**: `/product/page={page}/`
-- **Records**: 4,833 total products
-- **Features**: Complex nested data with variations, images, and marketplace pricing
-- **Pagination**: Custom implementation with page-based URLs
-
-### Orders Stream  
-- **Endpoint**: `/order/page={page}/`
-- **Records**: 1,355 total orders
-- **Features**: Complete order details with customer info, addresses, and line items
-- **Performance**: ~1,100 records extracted in 21.96 seconds
-
-### Customers Stream
-- **Endpoint**: `/customer/page={page}/`
-- **Features**: Customer information with pagination support
-- **Pagination**: Stops when receiving empty `{"customers": []}` response
-
-### Other Streams
-- **Categories**: `/category/` - 29 categories, single page
-- **Brands**: `/brand/` - 100 brands, single page  
-- **Prices**: `/price/` - 70 price configurations, single page
-- **Stores**: `/store/getStores` - Store information
-- **Marketplace Settings**: Quantity and price settings for marketplaces
 
 ## Usage
 
-### With Meltano (Docker)
+### With Meltano
 
+1. Add the tap to your Meltano project:
 ```bash
-# Discover streams
-docker run -v ${pwd}:/projects -w /projects meltano/meltano invoke tap-entegra --discover
-
-# Run full pipeline to ClickHouse
-docker run -v ${pwd}:/projects -w /projects meltano/meltano run tap-entegra target-clickhouse
-
-# Run specific streams only
-# Edit meltano.yml select configuration and run again
+meltano add extractor tap-entegra
 ```
 
-### Direct Usage
-
+2. Configure the tap:
 ```bash
-# Discovery
-tap-entegra --config config.json --discover
-
-# Extract data
-tap-entegra --config config.json --catalog catalog.json
+meltano config tap-entegra set email your-email@example.com
+meltano config tap-entegra set password your-password
+meltano config tap-entegra set start_date '2020-01-01T00:00:00Z'
 ```
 
-## API Limits
+3. Test the connection:
+```bash
+meltano invoke tap-entegra --test
+```
 
-Be aware of Entegra API limitations:
+4. Run the tap:
+```bash
+meltano run tap-entegra target-jsonl
+```
 
-- **Daily Limit**: 20,000 requests per day
-- **Token Expiry**: 90 days
-- **Rate Limiting**: Implement appropriate delays if needed
+### Standalone
+
+You can also run the tap directly:
+
+```bash
+tap-entegra --config CONFIG --discover
+tap-entegra --config CONFIG --catalog CATALOG
+```
+
+## API Rate Limits
+
+The Entegra API has the following limits:
+- **Daily Requests**: 20,000 requests per day
+- **Token Expiry**: JWT tokens expire after 90 days
+- **Concurrent Requests**: Not specified, but the tap makes sequential requests
+
+## Data Schema
+
+### Orders Stream
+The orders stream includes comprehensive order data:
+- Order details (ID, number, status, dates)
+- Customer information
+- Product line items with pricing
+- Shipping and fulfillment data
+- Marketplace-specific fields
+
+### Products Stream  
+The products stream includes:
+- Product catalog information
+- Variations and specifications
+- Pricing across different channels
+- Inventory quantities
+- Images and descriptions
 
 ## Development
 
-### Setup Development Environment
+### Requirements
 
+* Python 3.8+
+* Poetry for dependency management
+
+### Setup
+
+1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/tap-entegra.git
+git clone https://github.com/emreustundag/tap-entegra.git
 cd tap-entegra
-pip install -e ".[dev]"
 ```
 
-### Run Tests
-
+2. Install dependencies:
 ```bash
-pytest
+poetry install
 ```
 
-### Code Formatting
-
+3. Create a `.env` file with your configuration:
 ```bash
-ruff format .
-ruff check . --fix
+TAP_ENTEGRA_EMAIL=your-email@example.com
+TAP_ENTEGRA_PASSWORD=your-password
+TAP_ENTEGRA_START_DATE=2020-01-01T00:00:00Z
 ```
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Pagination Loops**: Fixed with custom `request_records` methods
-2. **Schema Mismatches**: All fields configured as `StringType` for ClickHouse compatibility
-3. **Authentication**: JWT tokens automatically refreshed every hour
-
-### Docker Issues
-
+4. Run tests:
 ```bash
-# If ClickHouse connection fails, ensure ClickHouse is running:
-docker run -d --name clickhouse-server -p 8123:8123 clickhouse/clickhouse-server
+poetry run pytest
+```
 
-# Check container logs:
-docker logs clickhouse-server
+### Testing
+
+Run the tap in discovery mode:
+```bash
+poetry run tap-entegra --config config.json --discover
+```
+
+Run the tap with a catalog:
+```bash
+poetry run tap-entegra --config config.json --catalog catalog.json
 ```
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License.
 
 ## Support
 

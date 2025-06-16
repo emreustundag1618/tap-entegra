@@ -52,16 +52,21 @@ plugins:
       label: User Agent
       description: A custom User-Agent header to send with each request
 
-    # TODO: Declare required settings here:
+    - name: date_chunk_size
+      kind: integer
+      label: Date Chunk Size
+      description: Number of days to process in each chunk for large datasets (default 30)
+
+    # TODO: Configure with your credentials:
     config:
-      email: apitestv2@entegrabilisim.com
-      password: apitestv2
+      # email: your-email@example.com
+      # password: your-password
       api_url: https://apiv2.entegrabilisim.com
       page_size: 100
-      start_date: '2010-01-01T00:00:00Z'
+      start_date: '2020-01-01T00:00:00Z'
+      date_chunk_size: 30
 
     select:
-    # - '!*.*'
     - categories.*
     - brands.*
     - stores.*
@@ -71,6 +76,7 @@ plugins:
     - customers.*
     - products.*
     - orders.*
+  
   loaders:
   - name: target-jsonl
     variant: andyh1203
@@ -92,3 +98,4 @@ plugins:
       sqlalchemy_url: clickhouse+http://default:@host.docker.internal:8123/raw_dev
       verify: false
       engine_type: MergeTree
+      load_method: overwrite

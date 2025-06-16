@@ -20,42 +20,10 @@ class ProductsStream(EntegraStream):
     name = "products"
     path = "/product/"
     primary_keys: t.ClassVar[list[str]] = ["id"]
-    replication_key = "date_change"
+    replication_key = None  # Disable incremental replication - use full table sync
     records_jsonpath = "$.productList[*]"
     
-    def request_records(self, context: dict | None) -> t.Iterable[dict]:
-        """Request records from paginated endpoint, stopping when empty response."""
-        import requests
-        
-        page = 1
-        while True:
-            # Construct URL for current page
-            url = f"{self.url_base}{self.path}page={page}/"
-            
-            # Create request manually
-            headers = self.http_headers
-            auth = self.authenticator
-            
-            response = requests.get(url, headers=headers, auth=auth, verify=False)
-            response.raise_for_status()
-            
-            # Parse response
-            try:
-                data = response.json()
-                if "productList" in data:
-                    products = data["productList"]
-                    if len(products) == 0:
-                        # Empty response means no more pages
-                        break
-                    # Yield all products from this page
-                    yield from products
-                    page += 1
-                else:
-                    # No productList key, stop
-                    break
-            except (ValueError, KeyError):
-                # Invalid response, stop
-                break
+    # Removed manual request_records to use SDK's built-in incremental logic
 
     schema = th.PropertiesList(
         # Basic product info
@@ -188,47 +156,118 @@ class ProductsStream(EntegraStream):
 
 
 class OrdersStream(EntegraStream):
-    """Orders stream for Entegra API."""
+    """Orders stream for Entegra API with date-range chunking for large datasets."""
 
     name = "orders"
     path = "/order/"
     primary_keys: t.ClassVar[list[str]] = ["id"]
-    replication_key = "date_change"  # Changed to match actual API field
+    replication_key = None  # Use full table sync with date chunking
     records_jsonpath = "$.orders[*]"
     
     def request_records(self, context: dict | None) -> t.Iterable[dict]:
-        """Request records from paginated endpoint, stopping when empty response."""
+        """Request records using date-range chunking for better performance with large datasets."""
         import requests
+        from datetime import datetime, timedelta
         
-        page = 1
-        while True:
-            # Construct URL for current page
-            url = f"{self.url_base}{self.path}page={page}/"
+        # Get start date from config
+        start_date_config = self.config.get("start_date")
+        if not start_date_config:
+            self.logger.error("start_date is required for orders sync")
+            return
             
-            # Create request manually
-            headers = self.http_headers
-            auth = self.authenticator
-            
-            response = requests.get(url, headers=headers, auth=auth, verify=False)
-            response.raise_for_status()
-            
-            # Parse response
+        # Parse start date and ensure timezone-naive
+        if hasattr(start_date_config, 'strftime'):
+            start_date = start_date_config
+            # Remove timezone info if present
+            if start_date.tzinfo is not None:
+                start_date = start_date.replace(tzinfo=None)
+        else:
             try:
-                data = response.json()
-                if "orders" in data:
-                    orders = data["orders"]
-                    if len(orders) == 0:
-                        # Empty response means no more pages
-                        break
-                    # Yield all orders from this page
-                    yield from orders
-                    page += 1
+                if isinstance(start_date_config, str):
+                    if 'T' in start_date_config:
+                        # Parse ISO format and remove timezone
+                        start_date = datetime.fromisoformat(start_date_config.replace('Z', '+00:00'))
+                        start_date = start_date.replace(tzinfo=None)
+                    else:
+                        start_date = datetime.strptime(start_date_config, '%Y-%m-%d')
                 else:
-                    # No orders key, stop
+                    start_date = datetime.now() - timedelta(days=365)  # Default to 1 year ago
+            except (ValueError, TypeError):
+                start_date = datetime.now() - timedelta(days=365)  # Default to 1 year ago
+        
+        # Current date as end date (timezone-naive)
+        end_date = datetime.now()
+        
+        # Define chunk size (days) from config
+        chunk_days = self.config.get("date_chunk_size", 30)  # Default to 30 days
+        
+        current_date = start_date
+        total_records = 0
+        
+        self.logger.info(f"Starting date-chunked sync from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        
+        while current_date < end_date:
+            # Calculate chunk end date
+            chunk_end = min(current_date + timedelta(days=chunk_days), end_date)
+            
+            # Format dates for API
+            start_date_str = current_date.strftime('%Y-%m-%d')
+            end_date_str = chunk_end.strftime('%Y-%m-%d')
+            
+            self.logger.info(f"Processing chunk: {start_date_str} to {end_date_str}")
+            
+            # Fetch orders for this date range
+            chunk_records = 0
+            page = 1
+            
+            while True:
+                # Construct URL with date parameters
+                url = f"{self.url_base}{self.path}page={page}/"
+                
+                # Parameters for this chunk
+                params = {
+                    "start_date": start_date_str,
+                    "end_date": end_date_str,
+                    "limit": self.config.get("page_size", 100)
+                }
+                
+                # Make request
+                headers = self.http_headers
+                auth = self.authenticator
+                
+                try:
+                    response = requests.get(url, headers=headers, auth=auth, params=params, verify=False)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    
+                    if "orders" in data and len(data["orders"]) > 0:
+                        orders = data["orders"]
+                        chunk_records += len(orders)
+                        
+                        # Yield all orders from this page
+                        yield from orders
+                        
+                        # Check if we got less than page size (last page)
+                        if len(orders) < params["limit"]:
+                            break
+                            
+                        page += 1
+                    else:
+                        # No more orders in this chunk
+                        break
+                        
+                except Exception as e:
+                    self.logger.error(f"Error fetching chunk {start_date_str} to {end_date_str}, page {page}: {e}")
                     break
-            except (ValueError, KeyError):
-                # Invalid response, stop
-                break
+            
+            total_records += chunk_records
+            self.logger.info(f"Chunk {start_date_str} to {end_date_str}: {chunk_records} records")
+            
+            # Move to next chunk
+            current_date = chunk_end + timedelta(days=1)
+        
+        self.logger.info(f"Date-chunked sync completed. Total records: {total_records}")
 
     schema = th.PropertiesList(
         # Basic order info
@@ -493,11 +532,41 @@ class OrdersStream(EntegraStream):
         """Return URL parameters for the request."""
         params = super().get_url_params(context, next_page_token)
         
-        # Add date filtering if start_date is configured
+        # Full table replication: Always fetch all orders from start_date to current date
+        # This ensures we get ALL orders every time, replacing the entire table
         if self.config.get("start_date"):
-            params["start_date"] = self.config["start_date"]
+            start_date = self.config["start_date"]
+            if hasattr(start_date, 'strftime'):
+                start_date_str = start_date.strftime('%Y-%m-%d')
+            else:
+                # Handle ISO string format
+                from datetime import datetime
+                if isinstance(start_date, str):
+                    try:
+                        parsed_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                        start_date_str = parsed_date.strftime('%Y-%m-%d')
+                    except ValueError:
+                        start_date_str = start_date
+                else:
+                    start_date_str = str(start_date)
+            
+            params["start_date"] = start_date_str
+            
+            # Always add end_date as current date
+            from datetime import datetime
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            params["end_date"] = current_date
             
         return params
+
+    def post_process(
+        self,
+        row: dict,
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict | None:
+        """Process the record after extraction."""
+        # No filtering needed for full table replication - return all records
+        return row
 
 
 class CategoriesStream(EntegraStream):

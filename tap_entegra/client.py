@@ -74,7 +74,7 @@ class EntegraStream(RESTStream):
         Returns:
             A dictionary of URL query parameters.
         """
-        # Entegra API uses path-based pagination, so no query params needed
+        # Base implementation returns empty dict, streams can override to add params
         return {}
     
     def get_url(

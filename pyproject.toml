@@ -1,7 +1,7 @@
 [project]
 name = "tap-entegra"
-version = "0.0.1"
-description = "Singer tap for entegra, built with the Meltano Singer SDK."
+version = "1.0.0"
+description = "Singer tap for extracting data from the Entegra API, built with the Meltano Singer SDK."
 readme = "README.md"
 authors = [{ name = "Emre Ustundag", email = "emreustundagbusiness@gmail.com" }]
 keywords = [

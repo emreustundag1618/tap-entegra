@@ -1,15 +1,26 @@
 # Secrets and internal config files
 **/.secrets/*
+config.json
+config_*.json
 
-# Ignore meltano internal cache and sqlite systemdb
-
+# Meltano internal files
 .meltano/
+meltano.db
 
-# Project specific - output files and configs with credentials
+# Project specific - output files and test data
 output/
 *.jsonl
-config_real.json
-config_test.json
+catalog.json
+
+# Debug and temporary files
+debug_*.py
+test_*.py
+*_debug.py
+*_test.py
+
+# Documentation files (keep main docs)
+orders-doc.md
+*-doc.md
 
 # Postman collections (large files)
 *.postman_collection.json
@@ -143,3 +154,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
